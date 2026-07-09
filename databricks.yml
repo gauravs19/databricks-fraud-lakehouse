@@ -1,0 +1,99 @@
+# Databricks Asset Bundle — deploys the pipeline and the daily job as code.
+#
+#   databricks bundle validate
+#   databricks bundle deploy -t dev
+#   databricks bundle run -t dev daily_fraud_job
+#
+# On Free Edition you can also create these via the UI (see docs/SETUP.md);
+# the bundle is the production-grade path and works with the Databricks CLI
+# authenticated against your Free Edition workspace.
+
+bundle:
+  name: fraud-lakehouse
+
+variables:
+  catalog:
+    default: workspace
+  schema:
+    default: fraud_lakehouse
+  notification_email:
+    description: Where job failure notifications go
+    default: gaurav.x.sharma19@gmail.com
+
+targets:
+  dev:
+    default: true
+    mode: development        # resources get a [dev <user>] prefix and pause schedules
+    workspace:
+      host: https://YOUR-WORKSPACE.cloud.databricks.com
+  prod:
+    mode: production
+    workspace:
+      host: https://YOUR-WORKSPACE.cloud.databricks.com
+
+resources:
+  pipelines:
+    fraud_pipeline:
+      name: fraud-lakehouse-pipeline
+      catalog: ${var.catalog}
+      schema: ${var.schema}
+      serverless: true
+      continuous: false                  # triggered: free-tier friendly, job-driven
+      libraries:
+        - file:
+            path: ./pipelines/fraud_pipeline.py
+
+  jobs:
+    daily_fraud_job:
+      name: fraud-lakehouse-daily
+      description: >
+        Daily fraud batch: land new synthetic feed -> run medallion pipeline ->
+        score with @champion model -> compute monitoring metrics.
+      schedule:
+        quartz_cron_expression: "0 30 5 * * ?"   # 05:30 daily
+        timezone_id: Asia/Kolkata
+        pause_status: PAUSED                     # unpause once first manual run is green
+      max_concurrent_runs: 1
+      email_notifications:
+        on_failure: [ "${var.notification_email}" ]
+      tasks:
+        - task_key: land_new_data
+          notebook_task:
+            notebook_path: ./notebooks/01_generate_transactions.py
+            base_parameters:
+              start_date: "{{start_time | date: '%Y-%m-%d'}}"
+              num_days: "1"
+        - task_key: run_pipeline
+          depends_on: [ { task_key: land_new_data } ]
+          pipeline_task:
+            pipeline_id: ${resources.pipelines.fraud_pipeline.id}
+        - task_key: batch_score
+          depends_on: [ { task_key: run_pipeline } ]
+          notebook_task:
+            notebook_path: ./notebooks/03_batch_score.py
+            base_parameters:
+              score_date: "auto"
+          max_retries: 1
+        - task_key: monitor
+          depends_on: [ { task_key: batch_score } ]
+          notebook_task:
+            notebook_path: ./notebooks/04_model_monitoring.py
+            base_parameters:
+              monitor_date: "auto"
+
+    weekly_retrain_job:
+      name: fraud-lakehouse-weekly-retrain
+      description: >
+        Weekly champion/challenger retrain. Registers every candidate; promotes
+        @champion only on a measured win (gate inside the notebook).
+      schedule:
+        quartz_cron_expression: "0 0 7 ? * SUN"  # Sundays 07:00
+        timezone_id: Asia/Kolkata
+        pause_status: PAUSED
+      max_concurrent_runs: 1
+      email_notifications:
+        on_failure: [ "${var.notification_email}" ]
+      tasks:
+        - task_key: train
+          notebook_task:
+            notebook_path: ./notebooks/02_train_fraud_model.py

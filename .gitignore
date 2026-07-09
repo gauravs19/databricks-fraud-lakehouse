@@ -1,0 +1,11 @@
+# Databricks
+.databricks/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Local scratch
+*.local.*
+.DS_Store
