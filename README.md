@@ -95,6 +95,12 @@ databricks.yml                 Asset Bundle: pipeline + daily job + weekly retra
 2. Push this repo to GitHub, then add it as a **Git folder** in your workspace
 3. Follow [docs/SETUP.md](docs/SETUP.md) — run order, pipeline creation, dashboard import
 
+**New to Databricks or lakehouse concepts?** Start with
+[docs/CONCEPTS.md](docs/CONCEPTS.md) — every concept this project uses
+(lakehouse, Delta, medallion, Auto Loader, expectations, MLflow, leakage,
+PR-AUC, PSI, bundles…) explained for beginners, in the order you'll meet them,
+each tied to the exact place it appears in this repo.
+
 ## Free-tier design decisions
 
 Every choice here is deliberate for Free Edition (see `docs/adr/`):

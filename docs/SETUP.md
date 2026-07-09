@@ -3,6 +3,9 @@
 End-to-end setup takes ~45 minutes the first time. Everything runs on serverless
 compute inside one free workspace.
 
+> New to Databricks? Read [CONCEPTS.md](CONCEPTS.md) first (or keep it open in
+> a second tab) — it explains every term this walkthrough uses.
+
 ## 0. Prerequisites
 
 - A [Databricks Free Edition](https://www.databricks.com/learn/free-edition) account
