@@ -19,8 +19,9 @@ jobs:
         run: |
           pip install ruff
           # Databricks notebooks reference runtime globals (spark, dbutils, dlt,
-          # display) and share names via %run — suppress only those classes.
-          ruff check notebooks/ pipelines/ --ignore F821,E501
+          # display), share names via %run, and place imports after %run cells —
+          # suppress only those classes.
+          ruff check notebooks/ pipelines/ --ignore F821,E501,E402
 
       - name: Python syntax check
         run: python -m compileall -q notebooks pipelines
