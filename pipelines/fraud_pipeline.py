@@ -1,19 +1,25 @@
-# Lakeflow Declarative Pipeline (DLT): Bronze -> Silver (+quarantine) -> Gold
-#
-# Configure the pipeline with:
-#   catalog: workspace
-#   schema (target): fraud_lakehouse
-#   serverless: true
-#
-# Design notes
-# - Bronze keeps data raw-as-landed (schema inferred, bad values rescued into
-#   _rescued_data) plus file lineage metadata. Reprocessing is always possible
-#   from Bronze without touching the source.
-# - Silver enforces the data contract: explicit types, quality expectations,
-#   watermarked dedup. Rows failing HARD expectations are dropped from Silver
-#   but captured in a quarantine table with a reason, so nothing is silently lost.
-# - Gold tables are materialized views: business-level aggregates recomputed
-#   incrementally by the pipeline, consumed by the dashboard and ML.
+# Databricks notebook source
+# MAGIC %md
+# MAGIC # Lakeflow Declarative Pipeline (DLT): Bronze → Silver (+quarantine) → Gold
+# MAGIC
+# MAGIC Configure the pipeline with:
+# MAGIC - catalog: `workspace`, schema (target): `fraud_lakehouse`
+# MAGIC - serverless: true, mode: Triggered
+# MAGIC
+# MAGIC Design notes
+# MAGIC - **Bronze** keeps data raw-as-landed (schema inferred, bad values rescued into
+# MAGIC   `_rescued_data`) plus file lineage metadata. Reprocessing is always possible
+# MAGIC   from Bronze without touching the source.
+# MAGIC - **Silver** enforces the data contract: explicit types, quality expectations,
+# MAGIC   watermarked dedup. Rows failing HARD expectations are dropped from Silver
+# MAGIC   but captured in a quarantine table with a reason, so nothing is silently lost.
+# MAGIC - **Gold** tables are materialized views: business-level aggregates recomputed
+# MAGIC   incrementally by the pipeline, consumed by the dashboard and ML.
+# MAGIC
+# MAGIC This file only *defines* tables — it is executed by a pipeline, not run
+# MAGIC interactively. Attach it to a pipeline via **Settings → Source code**.
+
+# COMMAND ----------
 
 import dlt
 from pyspark.sql import functions as F

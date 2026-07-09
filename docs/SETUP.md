@@ -44,12 +44,41 @@ days, so it is safe to run again.
 ## 4. Create and run the pipeline
 
 1. **Jobs & Pipelines → Create → ETL pipeline** (Lakeflow Declarative Pipelines)
-2. Source code: select `pipelines/fraud_pipeline.py` **inside your Git folder**
+2. Source code: select the **file** `pipelines/fraud_pipeline.py` **inside your
+   Git folder** — the file itself, not the `pipelines/` folder and not the repo
+   root. If the create dialog scaffolds its own pipeline folder instead of
+   letting you browse, create the pipeline first, then open **Settings →
+   Source code → Add/Configure** and point it at the file in the Git folder.
 3. Destination — catalog `workspace`, schema `fraud_lakehouse`; compute: serverless; mode: **Triggered**
 4. **Start**. First run ingests all 30 files; watch the DAG build
    Bronze → Silver (+quarantine) → 3 Gold tables. Click Silver to see the
    expectation metrics — the deliberately dirty rows land in
    `silver_transactions_quarantine`.
+
+### Troubleshooting: `NO_TABLES_IN_PIPELINE`
+
+*"Pipelines are expected to have at least one table defined but no tables were
+found"* means the update ran but scanned **zero `@dlt.table` definitions** —
+i.e. the pipeline is not actually reading `fraud_pipeline.py`. Check in order:
+
+1. **Settings → Source code** must list the exact path to the file, e.g.
+   `/Workspace/Users/<you>/databricks-fraud-lakehouse/pipelines/fraud_pipeline.py`.
+   The most common cause is a folder (or the wrong folder) selected instead of
+   the file — a scanned folder with no matching source yields exactly this error.
+2. **New Lakeflow pipeline editor**: creating an "ETL pipeline" may scaffold a
+   dedicated pipeline root folder (with a `transformations/` subfolder) and
+   only scan *that* folder — your Git folder's file is never seen. Either add
+   the Git-folder file explicitly as source code in settings, or copy
+   `fraud_pipeline.py` into the scaffolded `transformations/` folder.
+3. **Pull the latest repo version** (Git folder → ⋮ → Pull). The file carries a
+   `# Databricks notebook source` header so every picker treats it as
+   selectable source; very old checkouts may predate it.
+4. **Run As / sharing** (per the error text): if the pipeline runs as a
+   different principal, that principal needs access to the Git folder. On a
+   single-user Free Edition workspace this is rarely the issue.
+
+After fixing, run the pipeline again — the DAG should show 6 tables
+(bronze, silver, quarantine, 3 gold).
 
 ## 5. Train and register the model
 
