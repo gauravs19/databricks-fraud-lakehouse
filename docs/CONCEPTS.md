@@ -15,7 +15,7 @@ numbers or data**, usually a **diagram** (GitHub renders these natively),
 - [Part 2 — Data engineering](#part-2--data-engineering): Medallion · Auto Loader · Streaming & watermarks · Declarative pipelines · Expectations & quarantine · Materialized views
 - [Part 3 — Machine learning](#part-3--machine-learning): Features · Leakage · Time splits · Imbalance & metrics · The two models · MLflow · Champion/challenger · Batch scoring · Drift & PSI
 - [Part 4 — Operations](#part-4--operations): Jobs · Asset Bundles · CI & runbooks
-- [Glossary](#quick-glossary)
+- [Glossary](#glossary) — every term above (plus the wider ecosystem), each explained in full sentences
 
 **A trick this guide uses throughout:** we follow **one transaction** — a
 card-testing fraud attempt — through the entire system, from raw JSON to a
@@ -1323,67 +1323,394 @@ for the real one).
 
 ---
 
-## Quick glossary
+## Glossary
 
-**Foundations & ecosystem (Part 0)**
+Not a list of one-liners — each term gets a real explanation: what it is, why
+it exists, and what it looks like in practice. Grouped to match the guide's
+parts.
 
-| Term | One-liner |
-|---|---|
-| OLTP | Runs the business — 1-row reads/writes, milliseconds, apps (PostgreSQL, core banking) |
-| OLAP | Understands the business — scan millions, aggregate, analysts & dashboards |
-| Data warehouse | Curated, schema-on-write analytical database; the 1980s–present BI workhorse |
-| Data lake | Cheap object storage of raw files, any format; ungoverned it rots into a swamp |
-| Fact table | Events at a declared grain — numbers + foreign keys (one row = one transaction) |
-| Dimension table | The who/what/where/when context you slice facts by |
-| Star schema | Fact in the center, dimensions around it; every BI question = join + group by |
-| Grain | What exactly one fact row means — decide it first, everything follows |
-| SCD | Slowly changing dimensions — overwrite (Type 1) or keep dated history (Type 2) |
-| ETL / ELT | Transform-then-load (warehouse era) vs load-raw-then-transform (lakehouse era; medallion = ELT) |
-| Schema-on-write / on-read | Validate at the door (Silver) vs interpret at query time (Bronze) |
-| Parquet | Columnar file format — read only the columns you need; Delta is built on it |
-| Avro / ORC | Row-oriented Kafka-era sibling / columnar Hive-era rival of Parquet |
-| Kafka | Durable ordered event log; the standard real-time feed backbone |
-| CDC | Change data capture — stream inserts/updates/deletes out of an OLTP DB via its log |
-| Iceberg / Hudi | Delta Lake's open-table-format siblings; expect convergence, not a war |
-| dbt | SQL-first transformation framework — the analytics engineer's declarative pipeline |
-| Airflow | Industry-standard orchestrator; what our Databricks Job does natively |
-| Trino / Presto | Federated SQL — query lake + Postgres + Kafka in one statement, no copying |
-| ClickHouse / Druid / Pinot | Real-time OLAP serving layer for sub-second user-facing analytics |
-| Reverse ETL | Push curated data back into CRMs/ad tools — analytics acting, not just reporting |
-| Semantic layer | One governed definition of each metric so five dashboards can't disagree |
-| Feature store | Governed ML features, online + offline, point-in-time correct (ours is hand-rolled) |
-| Vector database | Stores embeddings for similarity search — the retrieval half of RAG/GenAI |
-| Data mesh | Org design: domains own & publish their data as products; not a technology |
-| Data contract | Producer↔consumer schema agreement enforced in code (our Silver HARD_RULES) |
-| MDM | Master data management — one golden record per customer/product across systems |
-| Data platform | Ingestion → storage → processing → serving + orchestration, governance, observability |
+### Foundations & ecosystem (Part 0)
 
-**This project's concepts (Parts 1–4)**
+**OLTP (online transaction processing).** The workload that *runs* the
+business: an app inserts or updates one row at a time, thousands of times per
+second, and must respond in milliseconds. Correctness and uptime dominate every
+other concern — if the OLTP database is slow, customers see declined cards and
+failed logins. PostgreSQL, Oracle, and core-banking systems live here, and
+analytics is deliberately kept away from them.
 
-| Term | One-liner |
-|---|---|
-| Lakehouse | Cheap open files + transaction layer = warehouse reliability at lake cost |
-| Delta Lake | Parquet + commit log → ACID tables, schema enforcement, time travel, MERGE |
-| Unity Catalog | Governance tree: `catalog.schema.object` for tables, files *and* models |
-| Volume | UC-governed folder for raw files (our JSONL landing zone) |
-| Serverless | Compute appears on demand; zero cluster configuration |
-| Medallion | Bronze (raw, replayable) → Silver (valid, deduped) → Gold (per-consumer aggregates) |
-| Auto Loader | Checkpointed file ingestion — each file exactly once, forever |
-| Rescued data | Schema-misfit values preserved in `_rescued_data` instead of crashing the pipeline |
-| Watermark | "Duplicates arrive within X" → bounded streaming state; explicit lateness assumption |
-| Declarative pipeline | Define tables; the framework derives the DAG, ordering and checkpoints |
-| Expectation | Named quality rule on a table; hard = drop (to quarantine), soft = count |
-| Quarantine | Rejected rows + reasons — visible loss instead of silent loss |
-| Materialized view | Pay at write time, serve cheap at read time |
-| Feature | Domain knowledge encoded as a number (velocity, spend-vs-history, new device…) |
-| Leakage | Training on information unavailable at prediction time; windows end at −1 to prevent it |
-| Time split | Train on the past, test on the future — the only honest split for fraud |
-| Precision / Recall | Alert quality / fraud coverage — the pair that replaces (useless) accuracy |
-| PR-AUC | The precision-recall trade-off summarized across all thresholds |
-| Precision@200 | Precision within the daily analyst budget — a metric tied to a real constraint |
-| Registry alias | `@champion` pointer → promote/rollback = move pointer, zero code change |
-| Champion/challenger | New model promoted only on a measured win over the incumbent |
-| Idempotent | Safe to rerun; MERGE-keyed writes make backfills harmless |
-| PSI | One number for "how far has this distribution moved"; >0.2 = investigate |
-| Asset Bundle | Jobs/pipelines as reviewed, deployable YAML in git |
-| Runbook | Incident playbooks written before the incident |
+**OLAP (online analytical processing).** The workload that *understands* the
+business: scan millions of historical rows, aggregate them, and return one
+small answer like "fraud rate by category per quarter." It's read-heavy,
+throughput-oriented, and tolerant of seconds-long queries. Warehouses,
+lakehouses, and Databricks SQL exist for this side; the eternal first step of
+data architecture is copying data from OLTP systems into an OLAP store so the
+two workloads never fight over the same machine.
+
+**Data warehouse.** The classic analytical database (Teradata, Snowflake,
+BigQuery): data is modeled and validated *before* loading (schema-on-write),
+so analysts query clean, trustworthy tables with fast SQL. Its weaknesses —
+high cost per terabyte, structured data only, and rigidity when requirements
+change — are exactly what data lakes and later lakehouses were invented to
+fix. The modeling discipline it produced (facts, dimensions, star schemas)
+outlived the appliances and is still how BI teams think.
+
+**Data lake.** Cheap object storage (S3, ADLS, GCS) holding raw files of any
+format — land everything now, decide what it means later. The economics are
+unbeatable and it accepts semi- and unstructured data warehouses can't, but
+files alone have no transactions, no schema enforcement, and no governance.
+Left unmanaged, a lake degrades into a "data swamp": thousands of folders
+nobody understands, three fields called `amount` meaning different things, and
+no way to know which copy is current.
+
+**Fact table.** In dimensional modeling, the table that records *events* —
+things that happened — at a declared grain, holding mostly numeric measures
+plus foreign keys to dimensions. Fact tables are the big, fast-growing,
+append-mostly tables: our `silver_transactions` is a fact table at transaction
+grain, and `gold_daily_kpis` is an *aggregate* fact at day grain. When someone
+asks "what are we measuring?", the answer is a fact table.
+
+**Dimension table.** The small, wide, descriptive tables that hold the
+*context* you slice facts by: who (customer), what (merchant, product), where
+(geography), when (calendar). Dimensions change slowly and are reused across
+many facts — one `dim_customer` serves transactions, disputes, and marketing
+facts alike. In our lakehouse the dimension *attributes* are denormalized onto
+the fact row (`merchant_category` lives on the transaction), a common modern
+trade of storage for join-free reads.
+
+**Star schema.** The layout that puts one fact table in the center with
+dimension tables around it, so every business question becomes the same
+mechanical shape: join fact to dimensions, filter and group by dimension
+attributes, aggregate the fact's measures. It won because analysts can
+understand it at a glance and query optimizers handle it well. Kimball-style
+star schemas and the medallion architecture are complements: medallion governs
+data *quality* on the way in, star schemas govern analyst *ergonomics* on the
+way out.
+
+**Grain.** The precise statement of what one row in a fact table means — "one
+row = one card transaction" vs "one row = one customer per day." It's the
+first decision in any table design because every measure, join, and aggregate
+depends on it; most double-counting bugs trace back to someone joining tables
+of different grains without noticing. State the grain in the table comment,
+as our pipeline does.
+
+**SCD (slowly changing dimension).** The family of techniques for handling
+dimension attributes that change over time — a customer moves from India to
+Singapore. Type 1 overwrites the old value (simple, but history is lost:
+last year's transactions now look Singaporean). Type 2 keeps dated history
+rows with effective-from/to columns, so facts join to the attribute values
+*as they were at the time*. Choosing between them is a business question
+about whether history matters, not a technical one.
+
+**ETL vs ELT.** Both mean "move data and reshape it"; the letter order
+encodes where transformation happens. ETL (extract → transform → load)
+transformed data on a separate server *before* loading, because warehouse
+storage was too expensive to hold raw data — and when the transform logic
+proved wrong, the raw was gone. ELT (extract → load → transform) loads raw
+data first into cheap storage and transforms inside the platform, keeping the
+original forever; the medallion pattern is ELT with names for the stages.
+
+**Schema-on-write vs schema-on-read.** Two philosophies of when data must
+conform to a structure. Schema-on-write validates at storage time (the
+warehouse way, our Silver): bad data is rejected at the door while the
+producer can still fix it, and every reader downstream gets guarantees.
+Schema-on-read stores anything and interprets at query time (the lake way,
+our Bronze): nothing is ever lost, but every reader re-solves parsing —
+inconsistently, unless something like a medallion pipeline centralizes it.
+
+**Parquet.** The universal columnar file format for analytics: values are
+stored column-by-column instead of row-by-row, so a query reading 2 of 12
+columns skips ~85% of the bytes, and similar values compressing together
+shrink files ~10×. It also carries types and per-block min/max statistics that
+let engines skip whole chunks. Delta Lake doesn't replace Parquet — it wraps
+it, adding the transaction log that Parquet alone lacks.
+
+**Avro / ORC.** Two formats you'll see in older or adjacent stacks. Avro is
+*row*-oriented and carries its schema with the data, which made it the
+standard payload format inside Kafka pipelines — good for streams of whole
+records, wrong for analytics. ORC is a *columnar* format from the Hive era,
+Parquet's main historical rival; technically fine, but Parquet won the
+ecosystem.
+
+**Kafka.** A distributed, durable, ordered log of events: producers append,
+and many independent consumers read at their own pace without deleting
+anything. It decouples systems (the fraud pipeline and the notification
+service both read the same payments topic without knowing about each other)
+and is the de-facto backbone for real-time data. In this project the daily
+JSONL drop stands in for what a Kafka feed would deliver continuously.
+
+**CDC (change data capture).** The technique for copying a live OLTP database
+without hammering it with queries: read the database's own transaction log
+and stream every insert, update, and delete as events. Debezium is the
+open-source standard; Lakeflow Connect is the Databricks-managed version. CDC
+is how "the warehouse is 5 minutes behind production" is achieved instead of
+"the nightly dump finished at 4am, maybe."
+
+**Iceberg / Hudi.** The two open table formats that solve the same problem as
+Delta Lake — making lake files behave like transactional tables — with
+different lineages (Iceberg from Netflix, Hudi from Uber). Iceberg has the
+broadest multi-vendor adoption, and since Databricks acquired Tabular (2024)
+the platforms increasingly read and write each other's formats. Treat "Delta
+vs Iceberg" as a fading implementation detail, not a strategic bet.
+
+**dbt.** A transformation framework where analysts write plain SQL `SELECT`
+statements and dbt turns them into a dependency-ordered, tested, documented
+pipeline — the same declarative idea as our Lakeflow pipeline, aimed at
+SQL-first teams. It defined the "analytics engineer" role and runs happily
+against Databricks; in a bigger org, the gold layer and dashboard queries in
+this project would likely be dbt models.
+
+**Airflow (and Dagster, Prefect).** The industry-standard orchestrators:
+you define a DAG of tasks in Python, and the scheduler runs them on a cron,
+tracks dependencies, retries failures, and alerts on problems. Databricks
+Jobs (§4.1) provide the same capability natively — which is why many shops
+run a thin Airflow layer that simply triggers Databricks jobs, keeping
+company-wide scheduling in one place.
+
+**Trino / Presto.** Federated SQL engines that query data *where it already
+lives* — one statement can join a lake table to a PostgreSQL table and a
+Kafka topic — instead of copying everything into one store first. Amazon
+Athena is managed Trino. Powerful for exploration and for stitching together
+systems you don't control; not a substitute for building governed tables.
+
+**ClickHouse / Druid / Pinot ("real-time OLAP").** Databases purpose-built to
+answer aggregations over billions of rows in tens of milliseconds, powering
+analytics *inside* user-facing products (the seller dashboard in a
+marketplace app). They sit downstream of a lakehouse as a specialized serving
+layer when dashboard-grade latency isn't enough; they don't replace the
+lakehouse's storage, governance, or ML roles.
+
+**Reverse ETL.** Pushing curated analytical data *back out* into operational
+tools — customer segments into the CRM, churn scores into the ad platform —
+so analytics acts on the business instead of only describing it. It closes
+the loop that ingestion opens; in our fraud story, the equivalent move is the
+review-queue table feeding a case-management system.
+
+**Semantic layer / metrics layer.** A governed, central definition of business
+metrics — what exactly counts as "fraud rate" or "active customer" — that all
+BI tools read from, instead of each dashboard embedding its own SQL. It exists
+because five teams computing revenue five ways is the most common way
+organizations lose trust in data. Our `gold_daily_kpis` embodies the same
+principle at small scale: the fraud-rate formula lives in exactly one place.
+
+**Feature store.** Infrastructure that treats ML features as governed, reusable
+assets: defined once, computed consistently, served both *offline* (bulk, for
+training) and *online* (milliseconds, for real-time inference), with
+point-in-time correctness built in so training can't leak future data. Our
+`_features.py` module plus the frozen `ml_merchant_risk` snapshot is the
+hand-rolled minimal version of exactly these guarantees (ADR-0004 explains the
+trade-off).
+
+**Vector database.** A store optimized for *embeddings* — the lists of numbers
+that AI models use to represent the meaning of text, images, or audio — and
+for finding the nearest neighbors of a query vector fast. It's the retrieval
+half of RAG (retrieval-augmented generation) systems: find the most relevant
+documents, hand them to an LLM. pgvector, Pinecone, and Milvus are common;
+Databricks Vector Search builds it into Unity Catalog.
+
+**Data mesh.** An *organizational* architecture, not a technology: instead of
+one central data team owning every pipeline (and becoming the bottleneck),
+each business domain — payments, lending, cards — owns its data end to end
+and publishes it as a discoverable, governed "data product" with SLAs. Unity
+Catalog's catalog/schema tree maps naturally onto mesh domains. When a vendor
+says they *sell* data mesh, be skeptical — it's mostly org design.
+
+**Data contract.** An explicit, enforced agreement between a data producer and
+its consumers about schema, semantics, and quality — "amount is a positive
+DOUBLE in USD, transaction_id is never null" — checked in code, not in a wiki.
+Breaking the contract fails loudly at the producer's door instead of silently
+corrupting dashboards weeks later. Our Silver `HARD_RULES` are precisely a
+data contract, with the quarantine table as the enforcement evidence.
+
+**MDM (master data management).** The old-school enterprise discipline of
+maintaining one authoritative "golden record" for each core entity — customer,
+product, merchant — reconciled across the dozens of systems that each hold a
+slightly different version. It matters here because fraud detection lives or
+dies on entity resolution: if C01342 in the card system and CUST-1342 in the
+mobile app aren't known to be the same person, velocity features undercount.
+
+**Data platform.** The umbrella term for the whole assembly this guide
+describes: ingestion, storage, processing, and serving layers, with
+orchestration, governance, and observability cutting across them (§0.8's
+diagram). The word "platform" signals it serves many teams and use cases
+through self-service, rather than being one team's pipeline. When an
+interviewer says "design a data platform," they want the layers, a technology
+per layer, and — the senior answer — the cross-cutting concerns.
+
+### This project's concepts (Parts 1–4)
+
+**Lakehouse.** The architecture that keeps data in cheap, open lake files but
+adds a transaction layer on top so those files behave like reliable warehouse
+tables — one copy of data serving SQL, BI, and ML together. It exists to kill
+the two-tier pattern (lake for ML + warehouse for BI) with its double cost,
+sync jobs, and dueling numbers. This entire project is a working example on a
+free workspace.
+
+**Delta Lake.** The open-source transaction layer that makes the lakehouse
+work: a Delta table is Parquet files plus a `_delta_log` of ordered JSON
+commits, and readers treat "the table" as whatever the log says. That single
+mechanism yields ACID writes (no half-written tables), schema enforcement
+(bad writes rejected at write time), time travel (query any historical
+version), and MERGE (transactional upsert). Every table in this project is
+Delta without ever saying so — it's the default.
+
+**Unity Catalog.** Databricks' governance layer: one tree of
+`catalog.schema.object` names covering tables, raw-file volumes, *and* ML
+models, with permissions, audit, and automatic lineage hanging off the names.
+Its quiet superpower is scope — one GRANT system for files, tables, and
+models, where most stacks bolt together three different ones. Everything this
+project creates lives under `workspace.fraud_lakehouse`.
+
+**Volume (UC volume).** A governed folder for raw *files* inside the Unity
+Catalog tree — same permission model as tables, but holding JSONL, images, or
+anything else. It's the landing zone pattern for Free Edition (which has no
+external cloud storage credentials): our generator writes daily files into
+`/Volumes/workspace/fraud_lakehouse/raw/transactions/` and Auto Loader reads
+from there.
+
+**Serverless compute.** Compute that appears when you run something and
+disappears after, with Databricks managing all sizing and scaling — no
+clusters to configure, no idle machines to pay for. Free Edition is
+serverless-only, which is why this repo contains zero cluster configuration;
+on paid tiers, serverless is increasingly the default for jobs, pipelines,
+and SQL.
+
+**Medallion architecture.** The Bronze → Silver → Gold layering: Bronze holds
+data raw and replayable (nothing lost, ever), Silver enforces the data
+contract (typed, valid, deduplicated), and Gold serves per-consumer aggregates
+(one table per business question). Its real justification is recoverability:
+cleaning logic *will* have bugs, and with Bronze preserved a bug is a rebuild
+rather than permanent data loss. See it end to end in
+`pipelines/fraud_pipeline.py`.
+
+**Auto Loader.** Databricks' incremental file-ingestion mechanism: it keeps a
+checkpoint of which files it has already processed, so each run picks up only
+new arrivals, exactly once, even across crashes and reruns. Without it,
+folder ingestion re-reads everything every run — cost grows forever and
+reruns duplicate rows. Our Bronze table uses it over the volume, and the
+one-file-per-day generator exists so you can watch it work.
+
+**Rescued data.** Auto Loader's answer to schema surprises: a value that
+doesn't fit the expected schema (a string in a numeric column, a brand-new
+field) is captured as JSON in the `_rescued_data` column instead of crashing
+the pipeline at 3am. The row still lands; the weirdness is preserved for
+investigation. It's the ingestion-layer expression of "never lose data,
+never fail on data."
+
+**Watermark.** A declared bound on lateness in streaming — "duplicates arrive
+within 2 days of the original" — that lets Spark keep only 2 days of
+seen-transaction-IDs in memory instead of remembering everything forever.
+It's the standard trade of bounded memory for an explicit business
+assumption, and the assumption belongs in code review, not buried in a
+config. Our Silver dedup is built on one.
+
+**Declarative pipeline (Lakeflow / DLT).** A pipeline where you write
+functions that *define tables* and the framework derives everything else —
+dependency graph, execution order, parallelism, checkpoints, retries — from
+the code itself. Reading `dlt.read("bronze_transactions")` inside the silver
+function *is* the dependency declaration. Same philosophical move as SQL and
+Terraform: describe the destination, let the engine drive.
+
+**Expectation.** A named data-quality rule attached directly to a table
+definition, evaluated on every row, with results recorded in the pipeline's
+event log. This project splits them by severity: *hard* rules (null primary
+key, non-positive amount) drop the row because downstream logic would break;
+*soft* rules (null merchant) let the row pass but count the imperfection.
+The split forces you to decide, rule by rule, what actually breaks consumers.
+
+**Quarantine.** The companion table that catches every row the hard
+expectations reject, stamped with a `_quarantine_reason` — so "dropped" never
+means "vanished." Quality gates that silently discard data hide upstream
+breakage until dashboards are quietly wrong; a trended quarantine chart makes
+the same breakage a visible spike on day one. Playbook 3 in the RUNBOOK is
+its operating manual.
+
+**Materialized view.** A view whose results are precomputed and stored, then
+kept fresh by the pipeline — readers get instant answers instead of
+re-running the aggregation on every dashboard load. It's the write-time vs
+read-time trade: pay once when data changes, serve thousands of reads cheap.
+All three gold tables are materialized views.
+
+**Feature (ML).** One numeric signal derived from raw data that encodes a
+piece of domain knowledge the model should use — transaction velocity for
+card testing, spend-vs-own-history for account takeover, first-time device
+for both. Feature engineering is where fraud expertise becomes arithmetic;
+the model then learns how to weight and combine those signals. Ours live in
+`_features.py`, one shared implementation for training and scoring.
+
+**Leakage.** Training on information that won't exist at prediction time —
+the classic silent killer of applied ML, because the model evaluates
+brilliantly and fails in production where the future genuinely isn't
+available. It sneaks in through features computed over full history, labels
+baked into aggregates, and random splits. The defenses in this repo: windows
+ending strictly before each transaction, feature snapshots frozen on the
+training window, and a time-based split.
+
+**Time-based split.** Evaluating a model by training on the past (days 1–24)
+and testing on the future (days 25–30), instead of a random 80/20 shuffle.
+Random splits scatter multi-transaction fraud episodes across both sides, so
+the model gets tested on fragments of events it partially memorized — inflated
+scores, guaranteed. The time split asks exactly the production question:
+given the past, catch *future* fraud.
+
+**Precision and recall.** The two numbers that replace accuracy for rare
+events. Precision: of the transactions we flagged, what fraction were really
+fraud? — low precision drowns analysts in false alarms until they ignore the
+queue. Recall: of the actual fraud, what fraction did we catch? — low recall
+is money walking out the door. Every alerting threshold trades one against
+the other, which is why we track both, daily, per model version.
+
+**PR-AUC.** The area under the precision-recall curve: every possible alert
+threshold gives one precision/recall pair, and PR-AUC summarizes the whole
+trade-off in a single number that ignores the ocean of easy true negatives.
+It's the standard headline metric when positives are rare (~0.4% here) —
+unlike ROC-AUC and accuracy, it can't look good by being right about
+legitimate transactions.
+
+**Precision@200.** Precision measured only within the top 200 daily alerts —
+because 200 cases is what the fraud-ops team can actually review
+(`MAX_DAILY_ALERTS`). A model can have beautiful curves and still waste the
+analysts' morning; this metric is tied to the real operating point, so it
+can't be gamed. The general lesson: choose metrics that mirror the business
+constraint, not just the statistics.
+
+**Registry alias.** A movable pointer (`@champion`) to a specific model
+version in the Unity Catalog registry. Scoring code loads the alias, never a
+version number — so promoting a new model, or rolling back a bad one, is a
+one-line pointer move with no code change and no redeploy. It's the
+mechanism that turns "which model is in production?" from tribal knowledge
+into a queryable fact.
+
+**Champion/challenger.** The promotion discipline: every retrain produces a
+challenger that is always *registered* (full audit trail) but only *promoted*
+if it measurably beats the incumbent champion on the identical test window.
+The gate is code, so nobody has to make — or defend — a judgment call at 6pm
+Friday, and a worse retrain silently loses instead of silently shipping.
+Watch it print `PROMOTED` or `NOT promoted` in notebook 02.
+
+**Idempotent.** An operation that produces the same result whether run once
+or five times — the property that makes 3am operations survivable, because
+reruns and backfills become safe instead of scary. Our scoring earns it by
+writing through MERGE keyed on `transaction_id`: a rerun updates existing
+prediction rows rather than duplicating them. When designing any pipeline
+step, "what happens if this runs twice?" is the question that finds the bugs.
+
+**PSI (population stability index).** A single number measuring how far a
+distribution has shifted from a baseline: bucket both, then sum
+`(actual% − expected%) × ln(actual%/expected%)` across buckets. Under 0.1 is
+stable, 0.1–0.2 deserves a look, above 0.2 demands investigation. We compute
+it daily on the model's score distribution against a training-time snapshot —
+the early-warning alarm that fires before precision visibly sags.
+
+**Asset Bundle (DAB).** Databricks jobs and pipelines declared as YAML in
+git (`databricks.yml`) and deployed by CLI — so a schedule change is a
+reviewed diff, dev and prod are the same file with different targets, and
+disaster recovery is `git clone` + `bundle deploy`. It's Terraform's
+infrastructure-as-code idea scoped to Databricks resources, and the antidote
+to unreproducible UI-clicked jobs.
+
+**Runbook.** Numbered operational playbooks for a system's known failure
+modes, written *before* any incident — so the 9am quarantine spike is handled
+by following steps, not by improvising under pressure. Ours covers job
+failures, backfills, quarantine spikes, drift, model rollback, full refresh,
+and alert floods. Writing it in calm weather is the half of production
+engineering that code review never sees.
